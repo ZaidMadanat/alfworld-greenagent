@@ -1,48 +1,47 @@
-
 from __future__ import annotations
 
 # Standard libraries
-import asyncio
+import json
 import logging
 import os
+import subprocess
+import sys
+import tempfile
 import time
-import json
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable, List
 from uuid import uuid4
-from collections import defaultdict
 
-import subprocess 
-import docker 
-
-
-# Agentbeats/A2A imports
-import httpx  
-from agentbeats import tool  
+# Third-party libraries
+import docker
+import httpx
+# AgentBeats / A2A imports
+from agentbeats import tool
 from a2a.client import A2AClient, A2ACardResolver
 from a2a.types import (
+    AgentCard,
     Message,
     MessageSendParams,
+    Role,
     SendStreamingMessageRequest,
     SendStreamingMessageSuccessResponse,
     TaskArtifactUpdateEvent,
     TaskStatusUpdateEvent,
-    Role,
-    Part,
     TextPart,
-    AgentCard,
 )
 
-# ALFWorld imports (text-only env for now)
-from alfworld.agents.environment import get_environment  
-import alfworld.agents.modules.generic as generic  
-
-
-# Paths 
+# Paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ALFWORLD_ROOT = PROJECT_ROOT / "alfworld"
+if str(ALFWORLD_ROOT) not in sys.path:
+    sys.path.insert(0, str(ALFWORLD_ROOT))
 ALFWORLD_CFG = ALFWORLD_ROOT / "configs/base_config.yaml"
-ALFWORLD_TASK_DIR = ALFWORLD_ROOT / "data/tasks_json"
+
+
+# ALFWorld imports (text-only env for now)
+from alfworld.agents.environment import get_environment
+import alfworld.agents.modules.generic as generic
 
 
 # Logging

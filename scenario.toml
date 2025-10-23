@@ -1,0 +1,43 @@
+[backend]
+url = "http://184.169.129.71:9000"
+
+[scenario]
+name        = "alfworld"
+description = "ALFWorld Cleanliness & Safety scenario"
+version     = "1.0.0"
+
+[[agents]]
+name           = "[ALFWorld] Green Agent"
+card           = "agents/green_agent/agent_card_clean.toml"
+launcher_host  = "0.0.0.0"
+launcher_port  = 8335
+agent_host     = "0.0.0.0"
+agent_port     = 8336
+backend        = "http://184.169.129.71:9000"
+model_type     = "openai"
+model_name     = "gpt-4o-mini"
+tools          = ["agents/tools.py"]
+mcp_servers    = ["http://184.169.129.71:9001/sse", "http://184.169.129.71:9002/sse"]
+
+[[agents]]
+name           = "[ALFWorld] white Agent"
+card           = "agents/white_agent_card.toml"
+launcher_host  = "0.0.0.0"
+launcher_port  = 8060
+agent_host     = "0.0.0.0"
+agent_port     = 8061
+backend        = "http://184.169.129.71:9000"
+model_type     = "openai"
+model_name     = "gpt-4o-mini"
+tools          = ["agents/white_agent/tools.py"]
+mcp_servers    = ["http://184.169.129.71:9002/sse"]
+
+# ─────────────────────────────────────────────────────────────
+# Launch configuration
+# ─────────────────────────────────────────────────────────────
+
+[launch]
+mode               = "tmux"              
+tmux_session_name  = "agentbeats-alfworld"
+startup_interval   = 2                   # seconds between launching each component
+wait_for_services  = true                # wait for services to be healthy before starting agents
