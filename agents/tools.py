@@ -37,6 +37,7 @@ ALFWORLD_ROOT = PROJECT_ROOT / "alfworld"
 if str(ALFWORLD_ROOT) not in sys.path:
     sys.path.insert(0, str(ALFWORLD_ROOT))
 ALFWORLD_CFG = ALFWORLD_ROOT / "configs/base_config.yaml"
+ALFWORLD_TASK_DIR = ALFWORLD_ROOT / "data" / "base_config" / "eval_out_of_distribution"
 
 
 # ALFWorld imports (text-only env for now)
