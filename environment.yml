@@ -1,0 +1,16 @@
+name: alfworld
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.9
+  - numpy=1.26.4
+  - pyyaml
+  - pip
+  - uvicorn
+  - fastapi
+  - httpx
+  - pytorch=2.1.*          # CPU-only build on macOS/Linux is fine for TextWorld
+  - cpuonly                 # if you're on macOS/CPU; remove on Linux with GPU
+  - pip:
+      - "alfworld[full]"   # TextWorld mode + extras

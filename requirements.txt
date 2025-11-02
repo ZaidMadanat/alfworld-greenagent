@@ -1,0 +1,13 @@
+ai2thor==2.1.0
+opencv-python
+pandas
+uvicorn
+textworld==1.6.2
+torch==2.1.2+cpu
+torchvision==0.16.2+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+tqdm
+werkzeug==2.0.3
+h5py
+pycocotools
+transformers
