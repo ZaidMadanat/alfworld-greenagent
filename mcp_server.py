@@ -19,7 +19,7 @@ from fastmcp import FastMCP
 
 
 # CONFIG
-BACKEND_URL = "http://184.169.129.71:9000"     # AgentBeats backend
+BACKEND_URL = "http://localhost:9000"     # AgentBeats backend
 DEFAULT_PORT = 9002                            # SSE endpoint for MCP
 DOCKER_PREFIX = "alfworld_"                    # container name = f"{DOCKER_PREFIX}{battle_id}"
 
@@ -133,6 +133,40 @@ def run_terminal_command_in_docker(
         },
     )
     return output
+
+@server.tool()
+def report_on_battle_end(
+    battle_id: str,
+    message: str,
+    winner: str,
+    detail: dict | None = None,
+    markdown_content: str | None = None,
+) -> str:
+    """Finalize the battle report with winner and final results."""
+    payload = {
+        "is_result": True,
+        "message": message,
+        "reported_by": "green_agent",
+        "winner": winner,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    if detail:
+        payload["detail"] = detail
+    if markdown_content:
+        payload["markdown_content"] = markdown_content
+
+    try:
+        r = requests.post(
+            f"{BACKEND_URL}/battles/{battle_id}",
+            json=payload,
+            timeout=10,
+        )
+        r.raise_for_status()
+        return "battle result logged to backend"
+    except Exception as exc:
+        logger.warning("Backend log failed (%s); writing locally", exc)
+        _append_json(Path("logs") / f"{battle_id}.json", "results", payload)
+        return "battle result logged locally"
 
 # CLI ENTRY
 if __name__ == "__main__":

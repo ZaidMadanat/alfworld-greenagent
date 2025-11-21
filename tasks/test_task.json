@@ -1,0 +1,12 @@
+{
+  "task_type": "pick_and_place_simple",
+  "pddl_domain": "clean",
+  "pddl_problem": "put apple in fridge",
+  "task_id": "test_task",
+  "initial_conditions": [],
+  "goal": {
+    "goal": [
+      "In(Apple, Fridge)"
+    ]
+  }
+}

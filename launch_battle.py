@@ -13,65 +13,38 @@ from typing import Optional, Dict, Any
 
 # Configuration
 BACKEND_URL = "http://localhost:9000"
-FRONTEND_URL = "http://localhost:5174"
+FRONTEND_URL = "http://localhost:5173"
 MAX_WAIT_TIME = 90  # seconds
 
-# Agent configurations - adjust these to match your agent cards
+# Agent configurations - using ALFWorld green agent from scenario.toml
 AGENTS = [
     {
-        "name": "Blue Agent",
-        "card": "scenarios/tensortrust/blue_weaker_agent_card.toml",
+        "name": "[ALFWorld] Green Agent",
+        "card": "agents/green_agent/agent_card_clean.toml",
         "launcher_host": "0.0.0.0",
-        "launcher_port": 9010,
+        "launcher_port": 8335,
         "agent_host": "0.0.0.0",
-        "agent_port": 9011,
-        "model_type": "openai",
-        "model_name": "o4-mini",
-    },
-    {
-        "name": "Red Agent",
-        "card": "scenarios/tensortrust/red_stronger_agent_card.toml",
-        "launcher_host": "0.0.0.0",
-        "launcher_port": 9020,
-        "agent_host": "0.0.0.0",
-        "agent_port": 9021,
+        "agent_port": 8336,
         "model_type": "openai",
         "model_name": "gpt-4o-mini",
-    },
-    {
-        "name": "Green Agent",
-        "card": "scenarios/tensortrust/green_agent/green_weaker_agent_card.toml",
-        "launcher_host": "0.0.0.0",
-        "launcher_port": 9030,
-        "agent_host": "0.0.0.0",
-        "agent_port": 9031,
-        "model_type": "openai",
-        "model_name": "o4-mini",
-        "tools": ["scenarios/tensortrust/green_agent/tools.py"],
-        "mcp_servers": ["http://localhost:9001/sse"],
+        "tools": ["agents/tools.py"],
+        "mcp_servers": ["http://localhost:9001/sse", "http://localhost:9002/sse"],
         "is_green": True,
-        "participant_requirements": [
-            {
-                "role": "red_agent",
-                "name": "prompt_injector",
-                "required": True,
-                "participant_agent": "Red Agent",
-            },
-            {
-                "role": "blue_agent",
-                "name": "guardrail_generator",
-                "required": True,
-                "participant_agent": "Blue Agent",
-            },
-        ],
+        # Note: For ALFWorld battles, participant requirements depend on your battle setup
+        # You can add participant_requirements here if needed for multi-agent battles
     },
 ]
 
 
-def start_agent(agent_config: Dict[str, Any], agentbeats_dir: Path, env: dict) -> subprocess.Popen:
+def start_agent(agent_config: Dict[str, Any], project_dir: Path, env: dict) -> subprocess.Popen:
     """Start an agent using agentbeats run command."""
+    # Card paths are relative to project directory
+    card_path = project_dir / agent_config["card"]
+    if not card_path.exists():
+        raise FileNotFoundError(f"Agent card not found: {card_path}")
+    
     cmd_parts = [
-        "agentbeats", "run", str(agentbeats_dir / agent_config["card"]),
+        "agentbeats", "run", str(card_path),
         "--launcher_host", agent_config["launcher_host"],
         "--launcher_port", str(agent_config["launcher_port"]),
         "--agent_host", agent_config["agent_host"],
@@ -82,7 +55,10 @@ def start_agent(agent_config: Dict[str, Any], agentbeats_dir: Path, env: dict) -
     
     if agent_config.get("tools"):
         for tool in agent_config["tools"]:
-            cmd_parts.extend(["--tool", str(agentbeats_dir / tool)])
+            tool_path = project_dir / tool
+            if not tool_path.exists():
+                raise FileNotFoundError(f"Tool file not found: {tool_path}")
+            cmd_parts.extend(["--tool", str(tool_path)])
     
     if agent_config.get("mcp_servers"):
         for mcp in agent_config["mcp_servers"]:
@@ -91,10 +67,11 @@ def start_agent(agent_config: Dict[str, Any], agentbeats_dir: Path, env: dict) -
     cmd = " ".join(cmd_parts)
     print(f"Starting {agent_config['name']}: {cmd}")
     
+    # Run from project directory so relative paths work
     proc = subprocess.Popen(
         cmd,
         shell=True,
-        cwd=str(agentbeats_dir),
+        cwd=str(project_dir),
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -225,7 +202,14 @@ def wait_for_battle_result(battle_id: str, backend_url: str, max_wait: int = MAX
 def main():
     """Main launcher function."""
     project_dir = Path(__file__).parent
-    agentbeats_dir = project_dir / "agentbeats"
+    # AgentBeats is in a separate directory at ~/agentbeats
+    agentbeats_dir = Path.home() / "agentbeats"
+    if not agentbeats_dir.exists():
+        # Fallback: check if it's in the project directory
+        agentbeats_dir = project_dir / "agentbeats"
+        if not agentbeats_dir.exists():
+            print(f"❌ AgentBeats directory not found at {Path.home() / 'agentbeats'} or {project_dir / 'agentbeats'}")
+            return 1
     
     # Ensure we have the API keys
     env = os.environ.copy()
@@ -246,7 +230,7 @@ def main():
         print("=" * 60)
         
         for agent_config in AGENTS:
-            proc = start_agent(agent_config, agentbeats_dir, env)
+            proc = start_agent(agent_config, project_dir, env)
             processes.append((agent_config["name"], proc, agent_config))
             time.sleep(2)  # Stagger startup
         

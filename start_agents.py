@@ -17,9 +17,9 @@ AGENT_COMMANDS = [
         "command": (
             "agentbeats run agents/green_agent/agent_card_clean.toml "
             "--launcher_port 8335 --agent_port 8336 "
-            "--backend http://184.169.129.71:9000 "
-            "--mcp http://184.169.129.71:9001/sse "
-            "--mcp http://184.169.129.71:9002/sse "
+            "--backend http://localhost:9000 "
+            "--mcp http://localhost:9001/sse "
+            "--mcp http://localhost:9002/sse "
             "--tool agents/tools.py"
         ),
     },
@@ -28,9 +28,9 @@ AGENT_COMMANDS = [
         "command": (
             "agentbeats run agents/white_agent_card.toml "
             "--launcher_port 8060 --agent_port 8061 "
-            "--backend http://184.169.129.71:9000 "
-            "--mcp http://184.169.129.71:9001/sse "
-            "--mcp http://184.169.129.71:9002/sse "
+            "--backend http://localhost:9000 "
+            "--mcp http://localhost:9001/sse "
+            "--mcp http://localhost:9002/sse "
             "--tool agents/white_agent/tools.py"
         ),
     },
