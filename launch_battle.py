@@ -32,6 +32,20 @@ AGENTS = [
         "is_green": True,
         # Note: For ALFWorld battles, participant requirements depend on your battle setup
         # You can add participant_requirements here if needed for multi-agent battles
+        "participant_requirements": [{"name": "opponent_agent", "role": "red_agent", "participant_agent": "[ALFWorld] White Agent", "required": True}]
+    },
+    {
+        "name": "[ALFWorld] White Agent",
+        "card": "agents/white_agent_card.toml",
+        "launcher_host": "0.0.0.0",
+        "launcher_port": 8060,
+        "agent_host": "0.0.0.0",
+        "agent_port": 8061,
+        "model_type": "openai",
+        "model_name": "gpt-4o-mini",
+        "tools": ["agents/tools.py"],
+        "mcp_servers": ["http://localhost:9001/sse", "http://localhost:9002/sse"],
+        "is_green": False,
     },
 ]
 
@@ -67,14 +81,17 @@ def start_agent(agent_config: Dict[str, Any], project_dir: Path, env: dict) -> s
     cmd = " ".join(cmd_parts)
     print(f"Starting {agent_config['name']}: {cmd}")
     
+    # Redirect output to files for debugging
+    log_file = open(f"{agent_config['name'].replace(' ', '_').lower()}.log", "w")
+    
     # Run from project directory so relative paths work
     proc = subprocess.Popen(
         cmd,
         shell=True,
         cwd=str(project_dir),
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
         text=True,
     )
     return proc

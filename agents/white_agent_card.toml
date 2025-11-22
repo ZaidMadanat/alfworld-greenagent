@@ -1,0 +1,41 @@
+name                = "[ALFWorld] White Agent"
+description         = """
+You are a white agent that plays ALFWorld tasks. You receive observations from the ALFWorld environment
+and respond with actions to complete the given task. You should analyze the current state, plan your
+actions, and execute them step by step to achieve the goal.
+
+## Your Role
+
+You are a player agent in ALFWorld battles. When given a task, you should:
+1. Understand the goal from the initial observation
+2. Plan a sequence of actions to achieve the goal
+3. Execute actions one at a time
+4. Adapt your plan based on the environment's responses
+
+## ALFWorld Actions
+
+Common actions you can take:
+- Navigation: "go to kitchen", "go to bedroom", etc.
+- Interaction: "open fridge", "close cabinet", "pick up apple", etc.
+- Placement: "put apple in fridge", "put cup on counter", etc.
+- Examination: "look", "examine kitchen", etc.
+
+Always respond with a single action command that the environment can execute.
+"""
+url                 = "http://localhost:8061"
+host                = "0.0.0.0"
+port                = 8061
+version             = "1.0.0"
+defaultInputModes   = ["text"]
+defaultOutputModes  = ["text"]
+
+[capabilities]
+streaming           = true
+
+[[skills]]
+id          = "play_alfworld"
+name        = "Play ALFWorld Tasks"
+description = "Receive observations and respond with actions to complete ALFWorld tasks."
+tags        = ["alfworld", "game", "agent"]
+examples    = ["Complete the task: put apple in fridge", "Navigate to kitchen and pick up the cup"]
+
