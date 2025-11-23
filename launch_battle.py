@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any
 # Configuration
 BACKEND_URL = "http://localhost:9000"
 FRONTEND_URL = "http://localhost:5173"
-MAX_WAIT_TIME = 90  # seconds
+MAX_WAIT_TIME = 300  # seconds
 
 # Agent configurations - using ALFWorld green agent from scenario.toml
 AGENTS = [
@@ -28,7 +28,7 @@ AGENTS = [
         "model_type": "openai",
         "model_name": "gpt-4o-mini",
         "tools": ["agents/tools.py"],
-        "mcp_servers": ["http://localhost:9001/sse", "http://localhost:9002/sse"],
+        "mcp_servers": ["http://localhost:9001/sse"],
         "is_green": True,
         # Note: For ALFWorld battles, participant requirements depend on your battle setup
         # You can add participant_requirements here if needed for multi-agent battles
@@ -44,7 +44,7 @@ AGENTS = [
         "model_type": "openai",
         "model_name": "gpt-4o-mini",
         "tools": ["agents/tools.py"],
-        "mcp_servers": ["http://localhost:9001/sse", "http://localhost:9002/sse"],
+        "mcp_servers": ["http://localhost:9001/sse"],
         "is_green": False,
     },
 ]
@@ -84,12 +84,20 @@ def start_agent(agent_config: Dict[str, Any], project_dir: Path, env: dict) -> s
     # Redirect output to files for debugging
     log_file = open(f"{agent_config['name'].replace(' ', '_').lower()}.log", "w")
     
+    # Add local agentbeats to PYTHONPATH
+    env_copy = env.copy()
+    agentbeats_src = project_dir / "agentbeats" / "src"
+    if agentbeats_src.exists():
+        current_pythonpath = env_copy.get("PYTHONPATH", "")
+        env_copy["PYTHONPATH"] = f"{agentbeats_src}:{current_pythonpath}"
+        print(f"Added {agentbeats_src} to PYTHONPATH for {agent_config['name']}")
+
     # Run from project directory so relative paths work
     proc = subprocess.Popen(
         cmd,
         shell=True,
         cwd=str(project_dir),
-        env=env,
+        env=env_copy,
         stdout=log_file,
         stderr=subprocess.STDOUT,
         text=True,
@@ -216,6 +224,40 @@ def wait_for_battle_result(battle_id: str, backend_url: str, max_wait: int = MAX
     return None
 
 
+def start_backend(project_dir: Path, env: dict) -> subprocess.Popen:
+    """Start the AgentBeats backend and MCP server."""
+    # Use agentbeats command directly, assuming it's in the PATH (like the agents)
+    cmd = "agentbeats run_backend --host localhost --backend_port 9000 --mcp_port 9001"
+    print(f"Starting Backend: {cmd}")
+    
+    log_file = open("agentbeats/backend_nohup.log", "w")
+    
+    proc = subprocess.Popen(
+        cmd,
+        shell=True,
+        cwd=str(project_dir),
+        env=env,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return proc
+
+
+def wait_for_backend_ready(backend_url: str, timeout: int = 30) -> bool:
+    """Wait for backend to be ready."""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            response = requests.get(f"{backend_url}/health", timeout=2)
+            if response.status_code == 200:
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(1)
+    return False
+
+
 def main():
     """Main launcher function."""
     project_dir = Path(__file__).parent
@@ -241,6 +283,19 @@ def main():
     agent_ids = {}
     
     try:
+        # Start Backend
+        print("=" * 60)
+        print("Starting Backend...")
+        print("=" * 60)
+        backend_proc = start_backend(project_dir, env)
+        processes.append(("Backend", backend_proc, {}))
+        
+        if wait_for_backend_ready(BACKEND_URL):
+            print("✅ Backend is ready")
+        else:
+            print("❌ Backend failed to start")
+            return 1
+
         # Start all agents
         print("=" * 60)
         print("Starting agents...")

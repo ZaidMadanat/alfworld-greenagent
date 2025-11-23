@@ -15,24 +15,24 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-# Add ALFWorld to path
-ALFWORLD_ROOT = Path("/app/alfworld")
+# Add ALFWorld to path - vzhong/alfworld installs to /opt/alfworld
+ALFWORLD_ROOT = Path("/opt/alfworld")
 if str(ALFWORLD_ROOT) not in sys.path:
     sys.path.insert(0, str(ALFWORLD_ROOT))
 
 ALFWORLD_CFG = ALFWORLD_ROOT / "configs" / "base_config.yaml"
 # Tasks are located in ALFWORLD_DATA/json_2.1.1/train/
 # ALFWORLD_DATA defaults to /app/alfworld/data when set in Dockerfile
-ALFWORLD_DATA = Path(os.getenv("ALFWORLD_DATA", str(ALFWORLD_ROOT / "data")))
+ALFWORLD_DATA = Path(os.getenv("ALFWORLD_DATA", "/opt/alfworld/data"))
 ALFWORLD_TASK_DIR = ALFWORLD_DATA / "json_2.1.1" / "train"
 
 # ALFWorld imports
-from alfworld.agents.environment import get_environment
+from alfworld.agents.environment import AlfredTWEnv
 import alfworld.agents.modules.generic as generic
 
-# dictionary
-ENVIRONMENTS = {}
-DEFAULT_SESSION_ID = 0
+# Environment instances per session
+ENVIRONMENTS = {}  # type: Dict[str, AlfredTWEnv]
+DEFAULT_SESSION_ID = "default"
 
 # Logging
 logger = logging.getLogger("alfworld_api")
@@ -72,8 +72,8 @@ _episode_sessions: Dict[str, Dict[str, Any]] = {}
 DEFAULT_SESSION_ID = "default"  # For simple single-episode testing
 
 # Cached ALFWorld config (loaded once at startup)
-_ALFWORLD_CONFIG: Optional[Dict[str, Any]] = None
-_ENV_TYPE: Optional[str] = None
+_ALFWORLD_CONFIG = None  # type: Optional[Dict[str, Any]]
+_ENV_TYPE = None  # type: Optional[str]
 
 
 # Pydantic models for request/response
@@ -147,7 +147,9 @@ def spawn_alfworld_env(task_json: Path):
     
     Note: This only creates the environment. Call env.reset(task_json=...) to initialize.
     """
-    env, _ = get_environment(str(ALFWORLD_CFG))
+    # AlfredTWEnv is used in vzhong/alfworld image
+    # Initialize environment with config
+    env = AlfredTWEnv(config=_ALFWORLD_CONFIG, train_eval="train").init_env(batch_size=1)
     task_meta = generic.load_json(task_json)
     return env, task_meta
 
@@ -247,7 +249,7 @@ async def reset_env(session_id: str = DEFAULT_SESSION_ID):
 
     env = ENVIRONMENTS.get(session_id)
     if env is None:
-        env = get_environment(env_type)(config, train_eval="train").init_env(batch_size=1)
+        env = AlfredTWEnv(config, train_eval="train").init_env(batch_size=1)
         ENVIRONMENTS[session_id] = env
 
     obs, info = env.reset()
@@ -361,7 +363,7 @@ async def step_episode(session_id: str = DEFAULT_SESSION_ID, action: str = None)
 
     env = ENVIRONMENTS.get(session_id)
     if env is None:
-        env = get_environment(env_type)(config, train_eval="train").init_env(batch_size=1)
+        env = AlfredTWEnv(config, train_eval="train").init_env(batch_size=1)
         ENVIRONMENTS[session_id] = env
 
     obs, scores, dones, infos = env.step([action])

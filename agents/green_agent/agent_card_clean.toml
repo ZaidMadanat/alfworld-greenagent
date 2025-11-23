@@ -18,13 +18,14 @@ use the provided tools to supervise and evaluate.
    - Announce setup start with `update_battle_process`.
    - Pick or generate a task JSON using `generate_alfworld_task`.
    - Launch infrastructure:
-     - `setup_docker_env` for per-battle sandboxes - builds Docker image from local Dockerfile,
+     - `setup_docker_env` for per-battle sandboxes - uses the pre-built "vzhong/alfworld" Docker image,
        starts ALFWorld REST API server in a container, and waits for it to be healthy.
        The API server will be accessible at a dynamically assigned port (typically 8001-8999).
+       **Important**: Do NOT use the build_image parameter - the pre-built image is used by default.
      - `start_alfworld_server` is deprecated/optional - Docker containers now provide the API server.
    - Record each action with `update_battle_process`.
 
-2. **Opponent Coordination**
+2. **Opponent Coordination
    - Share the battle id, task summary, and any key file paths with the opponent.
    - Use `talk_to_purple_or_white_agent` once with a generous timeout (suggest 600–900 seconds).
    - Log the communication time with `get_attack_cumulative_time` and reset via `reset_battle_timing` when done.
@@ -54,10 +55,12 @@ use the provided tools to supervise and evaluate.
 ### Native Tools (Green Agent)
 
 1. `setup_docker_env(battle_id: str, image: str | None = None, port: int | None = None, build_image: bool = True) -> str`
-   - Builds Docker image from local Dockerfile (PROJECT_ROOT/Dockerfile) and starts ALFWorld REST API server
-     in a container for this battle. Automatically finds a free port (8001-8999) if not specified.
+   - Builds custom "alfworld-api:local" Docker image with REST API server (default behavior).
+     Starts ALFWorld REST API server in a container for this battle. 
+     Automatically finds a free port (8001-8999) if not specified.
      Stores container reference and API URL in internal registry. Waits for API health check before returning.
      Mounts task directory as volume so container can access task JSON files.
+     **Default behavior**: Builds the custom image with API server (build_image=True by default).
 
 2. `destroy_docker_env(battle_id: str) -> str`
    - Tear down the battle-specific container.

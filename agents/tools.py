@@ -100,18 +100,26 @@ def get_docker_client() -> docker.DockerClient:
             "docker package not installed. Install it with: pip install docker"
         )
     
-    # Try explicit socket paths first
-    for socket_path in DOCKER_SOCKET_PATHS:
-        if os.path.exists(socket_path):
-            try:
-                return docker.DockerClient(base_url=f"unix://{socket_path}")
-            except Exception:  
-                continue  # try next socket
-
-    # Fallback – honour DOCKER_HOST, TCP, etc. 
     try:
-        return docker.from_env()
-    except Exception as exc:  # pragma: no cover
+        # First try default environment
+        client = docker.from_env()
+        client.ping()
+        return client
+    except (docker.errors.DockerException, Exception) as e:
+        logger.warning(f"Default docker.from_env() failed: {e}")
+        
+        # Try common socket paths explicitly
+        for socket_path in DOCKER_SOCKET_PATHS:
+            try:
+                logger.info(f"Trying Docker socket at {socket_path}...")
+                client = docker.DockerClient(base_url=f"unix://{socket_path}")
+                client.ping()
+                logger.info(f"Successfully connected to Docker at {socket_path}")
+                return client
+            except (docker.errors.DockerException, Exception) as e2:
+                logger.debug(f"Failed to connect to {socket_path}: {e2}")
+        
+        # If all fail, raise a RuntimeError
         raise RuntimeError(
             "Could not connect to the Docker daemon. Is Docker running?"
         ) from exc
@@ -331,7 +339,7 @@ async def talk_to_purple_or_white_agent(
     try:
         req = SendStreamingMessageRequest(
             message=Message(
-                role=Role.USER,
+                role="user",
                 parts=[TextPart(text=query)],
             ),
             params=MessageSendParams(),
@@ -405,11 +413,14 @@ def generate_alfworld_task(task_id: str, battle_id: str) -> str:
     tasks programmatically (e.g., difficulty sampling).
     """
     candidate = ALFWORLD_TASK_DIR / f"{task_id}.json"
+    logger.info(f"generate_alfworld_task: Looking for {candidate}")
     if not candidate.exists():
+        logger.error(f"generate_alfworld_task: File not found: {candidate}")
         raise FileNotFoundError(
             f"Task {task_id} not found under {ALFWORLD_TASK_DIR}"
         )
     logger.debug("Using task file %s for battle %s", candidate, battle_id)
+    logger.info(f"generate_alfworld_task: Found {candidate}")
     return str(candidate)
 
 
@@ -420,9 +431,10 @@ def setup_docker_env(
     port: int | None = None,
     build_image: bool = True,
 ) -> str:
-    """Build Docker image from local Dockerfile and start a container for this battle.
+    """Setup Docker container with ALFWorld environment for this battle.
 
-    The container runs the ALFWorld REST API server and exposes it on a dynamically
+    Builds the alfworld-api:local image with REST API server, or uses pre-built image.
+    The container runs the ALFWorld REST API server and exposes it on a dynamically 
     assigned host port. The container and API URL are stored in `_battle_containers`.
 
     Parameters
@@ -430,12 +442,12 @@ def setup_docker_env(
     battle_id : str
         Battle identifier
     image : str | None
-        Docker image name/tag to use. If None and build_image=True, uses "alfworld-api:local".
-        If None and build_image=False, raises error.
+        Docker image name/tag to use. If None, uses "alfworld-api:local" (custom build with API).
     port : int | None
         Host port to map container port 8000 to. If None, automatically finds a free port.
     build_image : bool
         If True, build the image from PROJECT_ROOT/Dockerfile before running.
+        Defaults to True to ensure the API server is available.
 
     Returns
     -------
@@ -445,9 +457,14 @@ def setup_docker_env(
     client = get_docker_client()
     container_name = f"alfworld_{battle_id}"
     
+    # FORCE custom API image (has the REST API server) - ignore any parameter
+    # The agent may try to use vzhong/alfworld but we need the API server
+    image = "alfworld-api:local"
+    
+    logger.info(f"Starting setup_docker_env for battle {battle_id} with image {image}")
+    
     # Build image if requested
     if build_image:
-        image = image or "alfworld-api:local"
         dockerfile_path = PROJECT_ROOT / "Dockerfile"
         
         if not dockerfile_path.exists():
@@ -503,6 +520,19 @@ def setup_docker_env(
             "mode": "ro"  # Read-only mount
         }
         logger.info(f"Mounting task directory {ALFWORLD_TASK_DIR} to /app/tasks in container")
+    
+    # Remove any existing container with the same name to avoid conflicts
+    try:
+        existing_container = client.containers.get(container_name)
+        logger.info(f"Found existing container {container_name}, removing it...")
+        existing_container.stop(timeout=5)
+        existing_container.remove(force=True)
+        logger.info(f"Removed existing container {container_name}")
+    except docker.errors.NotFound:
+        # No existing container, which is fine
+        pass
+    except Exception as e:
+        logger.warning(f"Error removing existing container {container_name}: {e}")
     
     # Start container
     logger.info(f"Starting container {container_name} with image {image} on port {port}")
