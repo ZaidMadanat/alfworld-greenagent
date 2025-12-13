@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any
 # Configuration
 BACKEND_URL = "http://localhost:9000"
 FRONTEND_URL = "http://localhost:5173"
-MAX_WAIT_TIME = 300  # seconds
+MAX_WAIT_TIME = 900  # seconds (15 minutes for full episode execution)
 
 # Agent configurations - using ALFWorld green agent from scenario.toml
 AGENTS = [
@@ -28,7 +28,7 @@ AGENTS = [
         "model_type": "openai",
         "model_name": "gpt-4o-mini",
         "tools": ["agents/tools.py"],
-        "mcp_servers": ["http://localhost:9001/sse"],
+        "mcp_servers": ["http://localhost:9001/sse", "http://localhost:9002/sse"],
         "is_green": True,
         # Note: For ALFWorld battles, participant requirements depend on your battle setup
         # You can add participant_requirements here if needed for multi-agent battles
@@ -44,7 +44,7 @@ AGENTS = [
         "model_type": "openai",
         "model_name": "gpt-4o-mini",
         "tools": ["agents/tools.py"],
-        "mcp_servers": ["http://localhost:9001/sse"],
+        "mcp_servers": ["http://localhost:9001/sse", "http://localhost:9002/sse"],
         "is_green": False,
     },
 ]
@@ -244,6 +244,49 @@ def start_backend(project_dir: Path, env: dict) -> subprocess.Popen:
     return proc
 
 
+def start_mcp_server(project_dir: Path, env: dict) -> subprocess.Popen:
+    """Start the custom ALFWorld MCP server on port 9002."""
+    mcp_server_path = project_dir / "mcp_server.py"
+    if not mcp_server_path.exists():
+        raise FileNotFoundError(f"MCP server not found: {mcp_server_path}")
+    
+    # Use the miniforge Python which has the required dependencies (docker, fastmcp, etc.)
+    python_path = Path.home() / "miniforge3" / "bin" / "python3.12"
+    if not python_path.exists():
+        # Fallback to whatever python3 is available
+        python_path = "python3"
+    cmd = f"{python_path} {mcp_server_path} --port 9002"
+    print(f"Starting MCP Server: {cmd}")
+    
+    log_file = open("mcp_server.log", "w")
+    
+    proc = subprocess.Popen(
+        cmd,
+        shell=True,
+        cwd=str(project_dir),
+        env=env,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return proc
+
+
+def wait_for_mcp_server_ready(mcp_url: str, timeout: int = 30) -> bool:
+    """Wait for MCP server to be ready."""
+    import time
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            response = requests.get(mcp_url.replace("/sse", ""), timeout=2)
+            # SSE endpoint might not respond to GET but server is up
+            return True
+        except requests.RequestException:
+            pass
+        time.sleep(1)
+    return False
+
+
 def wait_for_backend_ready(backend_url: str, timeout: int = 30) -> bool:
     """Wait for backend to be ready."""
     start_time = time.time()
@@ -295,6 +338,15 @@ def main():
         else:
             print("❌ Backend failed to start")
             return 1
+
+        # Start custom MCP server for ALFWorld tools
+        print("=" * 60)
+        print("Starting MCP Server...")
+        print("=" * 60)
+        mcp_proc = start_mcp_server(project_dir, env)
+        processes.append(("MCP Server", mcp_proc, {}))
+        time.sleep(3)  # Give MCP server time to start
+        print("✅ MCP Server started on port 9002")
 
         # Start all agents
         print("=" * 60)

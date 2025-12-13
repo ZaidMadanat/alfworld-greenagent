@@ -38,6 +38,7 @@ from a2a.types import (
     AgentCard,
     Message,
     MessageSendParams,
+    Part,
     Role,
     SendStreamingMessageRequest,
     SendStreamingMessageSuccessResponse,
@@ -92,6 +93,13 @@ _attack_cumulative_times: defaultdict[str, float] = defaultdict(float)
 # Structure: {battle_id: {"container": Container, "api_url": str}}
 _battle_containers: dict[str, dict[str, Any]] = {}
 
+# Track when run_episode is in progress to prevent premature container destruction
+_episode_in_progress: dict[str, bool] = {}
+
+# Lock to prevent parallel run_episode calls for the same battle
+import threading
+_episode_locks: dict[str, threading.Lock] = {}
+
 
 def get_docker_client() -> docker.DockerClient:
     """Get Docker client, raising error if docker package is not installed."""
@@ -122,7 +130,7 @@ def get_docker_client() -> docker.DockerClient:
         # If all fail, raise a RuntimeError
         raise RuntimeError(
             "Could not connect to the Docker daemon. Is Docker running?"
-        ) from exc
+        ) from e
 
 
 # ─────────────────────────────────────────────────────────────
@@ -196,8 +204,41 @@ def _get_api_url_for_battle(battle_id: str) -> str:
     return api_url
 
 
+def _wait_for_api_health_sync(api_url: str, timeout: int = 30) -> bool:
+    """Wait for the ALFWorld API server to be healthy (synchronous version).
+    
+    Parameters
+    ----------
+    api_url : str
+        Base URL of the API server
+    timeout : int
+        Maximum seconds to wait
+        
+    Returns
+    -------
+    bool
+        True if API is healthy, False if timeout reached
+    """
+    import requests
+    health_url = f"{api_url}/health"
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            response = requests.get(health_url, timeout=5)
+            if response.status_code == 200:
+                logger.info(f"API health check passed: {health_url}")
+                return True
+        except Exception as exc:
+            logger.debug(f"Health check failed (will retry): {exc}")
+        time.sleep(1)
+    
+    logger.warning(f"API health check timed out after {timeout}s: {health_url}")
+    return False
+
+
 async def _wait_for_api_health(api_url: str, timeout: int = 30) -> bool:
-    """Wait for the ALFWorld API server to be healthy.
+    """Wait for the ALFWorld API server to be healthy (async version).
     
     Parameters
     ----------
@@ -337,25 +378,33 @@ async def talk_to_purple_or_white_agent(
     """Send *query* to the opponent agent and stream back the reply using A2A protocol."""
     client = await _make_client(target_url)
     try:
-        req = SendStreamingMessageRequest(
+        params = MessageSendParams(
             message=Message(
-                role="user",
+                role=Role.user,
                 parts=[TextPart(text=query)],
-            ),
-            params=MessageSendParams(),
+                messageId=str(uuid4()),
+                taskId=None,
+            )
         )
+        req = SendStreamingMessageRequest(id=str(uuid4()), params=params)
         
         chunks: List[str] = []
-        async with client.stream(req) as stream:
-            async for event in stream:
-                if isinstance(event, SendStreamingMessageSuccessResponse):
-                    if event.message.parts:
-                        chunks.append(event.message.parts[0].text)
-                elif isinstance(event, (TaskArtifactUpdateEvent, TaskStatusUpdateEvent)):
-                    # Ignore task-level events for now
-                    continue
+        async for chunk in client.send_message_streaming(req):
+            if not isinstance(chunk.root, SendStreamingMessageSuccessResponse):
+                continue
+            event = chunk.root.result
+            if isinstance(event, TaskArtifactUpdateEvent):
+                for p in event.artifact.parts:
+                    if isinstance(p.root, TextPart):
+                        chunks.append(p.root.text)
+            elif isinstance(event, TaskStatusUpdateEvent):
+                msg = event.status.message
+                if msg:
+                    for p in msg.parts:
+                        if isinstance(p.root, TextPart):
+                            chunks.append(p.root.text)
         
-        return "".join(chunks)
+        return "".join(chunks).strip() or "No response from agent."
     except Exception as exc:
         logger.error(f"Error communicating with opponent agent: {exc}")
         raise
@@ -429,7 +478,7 @@ def setup_docker_env(
     battle_id: str,
     image: str | None = None,
     port: int | None = None,
-    build_image: bool = True,
+    build_image: bool = False,  # Default to False since image already exists
 ) -> str:
     """Setup Docker container with ALFWorld environment for this battle.
 
@@ -454,6 +503,13 @@ def setup_docker_env(
     str
         Success message with container name and API URL
     """
+    # Check if container already exists for this battle - prevent duplicate creation
+    existing_info = _battle_containers.get(battle_id)
+    if existing_info is not None:
+        api_url = existing_info.get("api_url", "unknown")
+        logger.info(f"Container already exists for battle {battle_id} at {api_url}, skipping setup")
+        return f"Docker container already running for battle {battle_id}. API URL: {api_url}"
+    
     client = get_docker_client()
     container_name = f"alfworld_{battle_id}"
     
@@ -545,7 +601,7 @@ def setup_docker_env(
             volumes=volumes if volumes else None,
             auto_remove=False,  # Don't auto-remove so we can stop it manually
             environment={
-                "ALFWORLD_DATA": "/app/alfworld/data",
+                "ALFWORLD_DATA": "/opt/alfworld/data",  # Correct path in vzhong/alfworld image
                 "API_PORT": "8000",
                 "API_HOST": "0.0.0.0",
             },
@@ -566,16 +622,9 @@ def setup_docker_env(
         "port": port,
     }
     
-    # Wait for API to be healthy (with timeout)
+    # Wait for API to be healthy (with timeout) - use synchronous version to avoid event loop issues
     logger.info(f"Waiting for API server to be ready at {api_url}")
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    health_ok = loop.run_until_complete(_wait_for_api_health(api_url, timeout=60))
+    health_ok = _wait_for_api_health_sync(api_url, timeout=60)
     if not health_ok:
         # Container might still be starting, but log a warning
         logger.warning(
@@ -597,6 +646,19 @@ def setup_docker_env(
 @tool
 def destroy_docker_env(battle_id: str) -> str:
     """Stop and remove the Docker container associated with *battle_id*."""
+    # Check if episode is still running - wait for it to complete
+    if _episode_in_progress.get(battle_id, False):
+        logger.warning(f"Episode still in progress for battle {battle_id}, waiting for it to complete...")
+        # Wait up to 60 seconds for episode to complete
+        wait_time = 0
+        while _episode_in_progress.get(battle_id, False) and wait_time < 60:
+            time.sleep(2)
+            wait_time += 2
+        if _episode_in_progress.get(battle_id, False):
+            logger.warning(f"Episode still in progress after 60s wait for battle {battle_id}, proceeding with cleanup")
+        else:
+            logger.info(f"Episode completed for battle {battle_id}, proceeding with cleanup")
+    
     battle_info = _battle_containers.pop(battle_id, None)
     if battle_info is None:
         msg = f"No container recorded for battle {battle_id}"
@@ -657,32 +719,42 @@ class A2AMessenger:
 
     def __init__(self, opponent_card: AgentCard, battle_id: str, timeout: float = 120.0):
         self.battle_id = battle_id
-        self.client = A2AClient(card=opponent_card)
+        self.client = A2AClient(httpx_client=_get_httpx_client(), agent_card=opponent_card)
         self.timeout = timeout
         self._cum_time = 0.0
 
     async def ask(self, prompt: str) -> dict[str, Any]:
         """Send *prompt* and collect streaming result & timing info."""
-        req = SendStreamingMessageRequest(
+        params = MessageSendParams(
             message=Message(
-                role=Role.USER,
+                role=Role.user,
                 parts=[TextPart(text=prompt)],
-            ),
-            params=MessageSendParams(),
+                messageId=str(uuid4()),
+                taskId=None,
+            )
         )
+        req = SendStreamingMessageRequest(id=str(uuid4()), params=params)
 
         t0 = time.perf_counter()
-        async with self.client.stream(req) as stream:
-            chunks: List[str] = []
-            async for event in stream:
-                if isinstance(event, SendStreamingMessageSuccessResponse):
-                    chunks.append(event.message.parts[0].text)
-                elif isinstance(event, (TaskArtifactUpdateEvent, TaskStatusUpdateEvent)):
-                    # Ignore task-level events for now
-                    continue
+        chunks: List[str] = []
+        async for chunk in self.client.send_message_streaming(req):
+            if not isinstance(chunk.root, SendStreamingMessageSuccessResponse):
+                continue
+            event = chunk.root.result
+            if isinstance(event, TaskArtifactUpdateEvent):
+                for p in event.artifact.parts:
+                    if isinstance(p.root, TextPart):
+                        chunks.append(p.root.text)
+            elif isinstance(event, TaskStatusUpdateEvent):
+                msg = event.status.message
+                if msg:
+                    for p in msg.parts:
+                        if isinstance(p.root, TextPart):
+                            chunks.append(p.root.text)
         elapsed = time.perf_counter() - t0
         self._cum_time += elapsed
-        return {"text": "".join(chunks), "elapsed": elapsed, "cumulative": self._cum_time}
+        return {"text": "".join(chunks).strip() or "No response", "elapsed": elapsed, "cumulative": self._cum_time}
+    
     def reset_timer(self) -> None:
         self._cum_time = 0.0
 
@@ -715,6 +787,44 @@ async def run_episode(
     -------
     dict with keys: task_json, action_log, steps, success (bool), reward, task_meta
     """
+    # Get or create lock for this battle
+    if battle_id not in _episode_locks:
+        _episode_locks[battle_id] = threading.Lock()
+    
+    lock = _episode_locks[battle_id]
+    
+    # Try to acquire lock - if already running, return immediately
+    if not lock.acquire(blocking=False):
+        logger.warning(f"Episode already in progress for battle {battle_id}, skipping duplicate call")
+        return {
+            "task_json": task_json_path,
+            "action_log": [],
+            "steps": 0,
+            "success": False,
+            "reward": 0.0,
+            "task_meta": {},
+            "error": "Episode already in progress - duplicate call ignored"
+        }
+    
+    # Mark episode as in progress to prevent container destruction
+    _episode_in_progress[battle_id] = True
+    
+    try:
+        return await _run_episode_impl(opponent_agent_url, task_json_path, battle_id, step_limit, api_url)
+    finally:
+        # Always clear the in-progress flag and release lock when done
+        _episode_in_progress[battle_id] = False
+        lock.release()
+
+
+async def _run_episode_impl(
+    opponent_agent_url: str,
+    task_json_path: str,
+    battle_id: str,
+    step_limit: int = 80,
+    api_url: str | None = None,
+) -> dict[str, Any]:
+    """Internal implementation of run_episode."""
     # Get API URL - either provided or lookup from container registry
     if api_url is None:
         api_url = _get_api_url_for_battle(battle_id)

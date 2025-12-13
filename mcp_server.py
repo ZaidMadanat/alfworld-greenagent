@@ -70,38 +70,8 @@ def _append_json(log_file: Path, key: str, entry: dict):
 # ─────────────────────────────────────────────
 # TOOLS EXPOSED TO AGENTBEATS
 # ─────────────────────────────────────────────
-@server.tool()
-def update_battle_process(
-    battle_id: str,
-    message: str,
-    reported_by: str,
-    detail: dict | None = None,
-    markdown_content: str | None = None,
-) -> str:
-    """Push a progress/event log to the backend (or fallback to local file)."""
-    payload = {
-        "is_result": False,
-        "message": message,
-        "reported_by": reported_by,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-    }
-    if detail:
-        payload["detail"] = detail
-    if markdown_content:
-        payload["markdown_content"] = markdown_content
-
-    try:
-        r = requests.post(
-            f"{BACKEND_URL}/battles/{battle_id}",
-            json=payload,
-            timeout=10,
-        )
-        r.raise_for_status()
-        return "logged to backend"
-    except Exception as exc:
-        logger.warning("Backend log failed (%s); writing locally", exc)
-        _append_json(Path("logs") / f"{battle_id}.json", "events", payload)
-        return "logged locally"
+# NOTE: update_battle_process and report_on_battle_end are provided by the backend MCP server
+# to avoid duplicate tool name errors. Only ALFWorld-specific tools are defined here.
 
 @server.tool()
 def run_terminal_command_in_docker(
@@ -134,39 +104,7 @@ def run_terminal_command_in_docker(
     )
     return output
 
-@server.tool()
-def report_on_battle_end(
-    battle_id: str,
-    message: str,
-    winner: str,
-    detail: dict | None = None,
-    markdown_content: str | None = None,
-) -> str:
-    """Finalize the battle report with winner and final results."""
-    payload = {
-        "is_result": True,
-        "message": message,
-        "reported_by": "green_agent",
-        "winner": winner,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-    }
-    if detail:
-        payload["detail"] = detail
-    if markdown_content:
-        payload["markdown_content"] = markdown_content
-
-    try:
-        r = requests.post(
-            f"{BACKEND_URL}/battles/{battle_id}",
-            json=payload,
-            timeout=10,
-        )
-        r.raise_for_status()
-        return "battle result logged to backend"
-    except Exception as exc:
-        logger.warning("Backend log failed (%s); writing locally", exc)
-        _append_json(Path("logs") / f"{battle_id}.json", "results", payload)
-        return "battle result logged locally"
+# NOTE: report_on_battle_end is provided by the backend MCP server
 
 # CLI ENTRY
 if __name__ == "__main__":

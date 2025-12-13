@@ -1,0 +1,38 @@
+INFO:     Started server process [89859]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8335 (Press CTRL+C to quit)
+[2025-12-02 22:32:18,766] WARNING green_tools: ALFWorld package not found: No module named 'torch'. ALFWorld-related functions will not work.
+INFO:     Started server process [89897]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8336): [errno 48] address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+[Launcher] Starting agent with command: agentbeats run_agent /Users/madanat/Documents/alfworld-greenagent/agents/green_agent/agent_card_clean.toml --agent_host 0.0.0.0 --agent_port 8336 --model_type openai --model_name gpt-4o-mini --mcp http://localhost:9001/sse --tool /Users/madanat/Documents/alfworld-greenagent/agents/tools.py
+[Launcher] Starting agent with command: agentbeats run_agent /Users/madanat/Documents/alfworld-greenagent/agents/green_agent/agent_card_clean.toml --agent_host 0.0.0.0 --agent_port 8336 --model_type openai --model_name gpt-4o-mini --mcp http://localhost:9001/sse --tool /Users/madanat/Documents/alfworld-greenagent/agents/tools.py
+INFO:     127.0.0.1:62831 - "POST /reset HTTP/1.1" 200 OK
+[2025-12-02 22:32:22,092] WARNING green_tools: ALFWorld package not found: No module named 'torch'. ALFWorld-related functions will not work.
+INFO:     Started server process [90016]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8336): [errno 48] address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+[Launcher] Backend returned status 404: {"detail":"Agent with ID test not found"}
+[Launcher] Backend returned status 404: {"detail":"Agent with ID test not found"}
+[Launcher] Backend returned status 404: {"detail":"Agent with ID test not found"}
+[Launcher] Starting agent with command: agentbeats run_agent /Users/madanat/Documents/alfworld-greenagent/agents/green_agent/agent_card_clean.toml --agent_host 0.0.0.0 --agent_port 8336 --model_type openai --model_name gpt-4o-mini --mcp http://localhost:9001/sse --tool /Users/madanat/Documents/alfworld-greenagent/agents/tools.py
+INFO:     127.0.0.1:62858 - "POST /reset HTTP/1.1" 200 OK
+[2025-12-02 22:32:28,151] WARNING green_tools: ALFWorld package not found: No module named 'torch'. ALFWorld-related functions will not work.
+INFO:     Started server process [90220]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8336): [errno 48] address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [89859]
+[Launcher] Successfully notified backend that agent 2f6ade15-67e2-491d-9f72-7811eab56ad4 is ready
