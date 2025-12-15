@@ -3,3 +3,18 @@
 alfworld-west-green.pem
 agentbeats/
 alfworld/
+
+cat >> .gitignore <<'EOF'
+
+# Logs and runtime artifacts
+*.log
+nohup.out
+agentbeats/backend_nohup.log
+agentbeats/backend_nohup.log.bak*
+mcp_server.log
+__pycache__/
+*.pyc
+
+# Local files
+*.pdf
+EOF
