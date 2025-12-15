@@ -22,7 +22,7 @@ Common actions you can take:
 
 Always respond with a single action command that the environment can execute.
 """
-url                 = "http://localhost:8061"
+url                 = "http://127.0.0.1:8061"
 host                = "0.0.0.0"
 port                = 8061
 version             = "1.0.0"

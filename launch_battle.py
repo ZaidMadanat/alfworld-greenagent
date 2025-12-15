@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 # Configuration
-BACKEND_URL = "http://localhost:9000"
-FRONTEND_URL = "http://localhost:5173"
+BACKEND_URL = "http://127.0.0.1:9000"
+FRONTEND_URL = "http://localhost:5173"  # User-facing URL, keep localhost for display
 MAX_WAIT_TIME = 900  # seconds (15 minutes for full episode execution)
 
 # Agent configurations - using ALFWorld green agent from scenario.toml
@@ -28,7 +28,7 @@ AGENTS = [
         "model_type": "openai",
         "model_name": "gpt-4o-mini",
         "tools": ["agents/tools.py"],
-        "mcp_servers": ["http://localhost:9001/sse", "http://localhost:9002/sse"],
+        "mcp_servers": ["http://127.0.0.1:9001/sse", "http://127.0.0.1:9002/sse"],
         "is_green": True,
         # Note: For ALFWorld battles, participant requirements depend on your battle setup
         # You can add participant_requirements here if needed for multi-agent battles
@@ -44,7 +44,7 @@ AGENTS = [
         "model_type": "openai",
         "model_name": "gpt-4o-mini",
         "tools": ["agents/tools.py"],
-        "mcp_servers": ["http://localhost:9001/sse", "http://localhost:9002/sse"],
+        "mcp_servers": ["http://127.0.0.1:9001/sse", "http://127.0.0.1:9002/sse"],
         "is_green": False,
     },
 ]
@@ -131,7 +131,7 @@ def wait_for_launcher_ready(launcher_url: str, timeout: int = 30) -> bool:
             # Test if launcher responds (even if reset fails, endpoint should exist)
             response = requests.post(
                 f"{base_url}/reset",
-                json={"signal": "reset", "agent_id": "test", "backend_url": "http://localhost:9000", "extra_args": {}},
+                json={"signal": "reset", "agent_id": "test", "backend_url": "http://127.0.0.1:9000", "extra_args": {}},
                 timeout=2
             )
             # Any response (even 400) means launcher is running
@@ -145,9 +145,10 @@ def wait_for_launcher_ready(launcher_url: str, timeout: int = 30) -> bool:
 
 def register_agent(agent_config: Dict[str, Any], backend_url: str) -> Optional[str]:
     """Register an agent with the backend and return agent_id."""
-    # Ensure URLs have trailing slashes to match agent card format
-    agent_url = f"http://localhost:{agent_config['agent_port']}/"
-    launcher_url = f"http://localhost:{agent_config['launcher_port']}/"
+    # Agent URL has trailing slash to match agent card format
+    agent_url = f"http://127.0.0.1:{agent_config['agent_port']}/"
+    # Launcher URL should NOT have trailing slash - backend appends /reset to it
+    launcher_url = f"http://127.0.0.1:{agent_config['launcher_port']}"
     
     register_data = {
         "alias": agent_config["name"],
@@ -227,7 +228,7 @@ def wait_for_battle_result(battle_id: str, backend_url: str, max_wait: int = MAX
 def start_backend(project_dir: Path, env: dict) -> subprocess.Popen:
     """Start the AgentBeats backend and MCP server."""
     # Use agentbeats command directly, assuming it's in the PATH (like the agents)
-    cmd = "agentbeats run_backend --host localhost --backend_port 9000 --mcp_port 9001"
+    cmd = "agentbeats run_backend --host 127.0.0.1 --backend_port 9000 --mcp_port 9001"
     print(f"Starting Backend: {cmd}")
     
     log_file = open("agentbeats/backend_nohup.log", "w")
@@ -301,6 +302,67 @@ def wait_for_backend_ready(backend_url: str, timeout: int = 30) -> bool:
     return False
 
 
+def cleanup_ports(ports: list[int]):
+    """Kill processes using specified ports to avoid binding conflicts."""
+    import subprocess
+    for port in ports:
+        try:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True,
+                text=True
+            )
+            if result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                for pid in pids:
+                    try:
+                        subprocess.run(["kill", "-9", pid], check=False)
+                        print(f"Killed process {pid} on port {port}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+
+def cleanup_docker_containers():
+    """Remove all old ALFWorld Docker containers to start fresh."""
+    try:
+        import docker
+    except ImportError:
+        print("⚠️  Docker module not available, skipping container cleanup")
+        return
+    
+    try:
+        # Try to connect to Docker
+        client = docker.from_env()
+        client.ping()
+    except Exception as e:
+        print(f"⚠️  Could not connect to Docker: {e}")
+        return
+    
+    try:
+        # Find all containers with alfworld_ prefix
+        all_containers = client.containers.list(all=True)
+        alfworld_containers = [c for c in all_containers if c.name.startswith("alfworld_")]
+        
+        if alfworld_containers:
+            print(f"Found {len(alfworld_containers)} old ALFWorld container(s), removing...")
+            for container in alfworld_containers:
+                try:
+                    if container.status == "running":
+                        print(f"  Stopping container: {container.name}")
+                        container.stop(timeout=5)
+                    print(f"  Removing container: {container.name}")
+                    container.remove()
+                except Exception as e:
+                    print(f"  ⚠️  Could not remove {container.name}: {e}")
+            print("✅ Old ALFWorld containers cleaned up")
+        else:
+            print("✅ No old ALFWorld containers found")
+    except Exception as e:
+        print(f"⚠️  Error during Docker cleanup: {e}")
+
+
 def main():
     """Main launcher function."""
     project_dir = Path(__file__).parent
@@ -312,6 +374,22 @@ def main():
         if not agentbeats_dir.exists():
             print(f"❌ AgentBeats directory not found at {Path.home() / 'agentbeats'} or {project_dir / 'agentbeats'}")
             return 1
+    
+    # Clean up old Docker containers and processes before starting fresh
+    print("=" * 60)
+    print("Cleaning up old resources...")
+    print("=" * 60)
+    
+    # Clean up old ALFWorld Docker containers
+    cleanup_docker_containers()
+    
+    # Clean up any processes using agent ports
+    agent_ports = [8335, 8336, 8060, 8061]
+    print("\nCleaning up any processes on agent ports...")
+    cleanup_ports(agent_ports)
+    time.sleep(1)  # Give ports time to free up
+    
+    print("\n✅ Cleanup complete, starting fresh...\n")
     
     # Ensure we have the API keys
     env = os.environ.copy()
@@ -361,8 +439,8 @@ def main():
         # Wait for agents and launchers to be ready
         print("\nWaiting for agents and launchers to be ready...")
         for agent_config in AGENTS:
-            agent_url = f"http://localhost:{agent_config['agent_port']}"
-            launcher_url = f"http://localhost:{agent_config['launcher_port']}"
+            agent_url = f"http://127.0.0.1:{agent_config['agent_port']}"
+            launcher_url = f"http://127.0.0.1:{agent_config['launcher_port']}"
             
             # Check both agent and launcher
             agent_ready = wait_for_agent_ready(agent_url, timeout=30) or wait_for_agent_ready(f"{agent_url}/", timeout=5)
@@ -393,6 +471,42 @@ def main():
         
         if not agent_ids:
             print("❌ No agents registered successfully")
+            return 1
+        
+        # Allow backend time to process registrations before battle creation (tau-bench coordination principle)
+        print("\nAllowing backend to process agent registrations...")
+        time.sleep(2)
+        
+        # Final verification: Ensure agents are still responsive before battle creation
+        print("Performing final agent health check...")
+        for agent_config in AGENTS:
+            agent_url = f"http://127.0.0.1:{agent_config['agent_port']}"
+            if not wait_for_agent_ready(agent_url, timeout=10):
+                print(f"⚠️  Warning: {agent_config['name']} agent endpoint not responding before battle creation")
+            else:
+                print(f"✅ {agent_config['name']} agent endpoint confirmed responsive")
+        
+        # Sanity check: Verify agent card endpoints are accessible via IPv4 before battle creation
+        print("\nPerforming IPv4 connectivity sanity check...")
+        sanity_check_passed = True
+        for agent_config in AGENTS:
+            try:
+                response = requests.get(
+                    f"http://127.0.0.1:{agent_config['agent_port']}/.well-known/agent-card.json",
+                    timeout=2
+                )
+                if response.status_code == 200:
+                    print(f"✅ {agent_config['name']} agent card accessible via IPv4 (127.0.0.1:{agent_config['agent_port']})")
+                else:
+                    print(f"❌ {agent_config['name']} agent card returned status {response.status_code}")
+                    sanity_check_passed = False
+            except Exception as e:
+                print(f"❌ {agent_config['name']} agent card check failed: {e}")
+                sanity_check_passed = False
+        
+        if not sanity_check_passed:
+            print("\n❌ Sanity check failed - agent endpoints not accessible via IPv4")
+            print("   This may cause 'Failed to notify green agent' errors")
             return 1
         
         # Find green agent

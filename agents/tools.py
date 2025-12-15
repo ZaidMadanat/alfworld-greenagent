@@ -182,7 +182,7 @@ def _get_api_url_for_battle(battle_id: str) -> str:
     Returns
     -------
     str
-        Base URL of the API server (e.g., "http://localhost:8001")
+        Base URL of the API server (e.g., "http://127.0.0.1:8001")
         
     Raises
     ------
@@ -612,8 +612,8 @@ def setup_docker_env(
         logger.error(f"Failed to start container: {exc}")
         raise RuntimeError(f"Failed to start container: {exc}") from exc
     
-    # Construct API URL
-    api_url = f"http://localhost:{port}"
+    # Construct API URL (use 127.0.0.1 to avoid IPv6 resolution issues)
+    api_url = f"http://127.0.0.1:{port}"
     
     # Store container and API URL
     _battle_containers[battle_id] = {
@@ -723,8 +723,11 @@ class A2AMessenger:
         self.timeout = timeout
         self._cum_time = 0.0
 
-    async def ask(self, prompt: str) -> dict[str, Any]:
-        """Send *prompt* and collect streaming result & timing info."""
+    async def ask(self, prompt: str, max_retries: int = 3, retry_delay: float = 2.0) -> dict[str, Any]:
+        """Send *prompt* and collect streaming result & timing info.
+        
+        Includes retry logic similar to working implementation.
+        """
         params = MessageSendParams(
             message=Message(
                 role=Role.user,
@@ -736,24 +739,41 @@ class A2AMessenger:
         req = SendStreamingMessageRequest(id=str(uuid4()), params=params)
 
         t0 = time.perf_counter()
-        chunks: List[str] = []
-        async for chunk in self.client.send_message_streaming(req):
-            if not isinstance(chunk.root, SendStreamingMessageSuccessResponse):
-                continue
-            event = chunk.root.result
-            if isinstance(event, TaskArtifactUpdateEvent):
-                for p in event.artifact.parts:
-                    if isinstance(p.root, TextPart):
-                        chunks.append(p.root.text)
-            elif isinstance(event, TaskStatusUpdateEvent):
-                msg = event.status.message
-                if msg:
-                    for p in msg.parts:
-                        if isinstance(p.root, TextPart):
-                            chunks.append(p.root.text)
-        elapsed = time.perf_counter() - t0
-        self._cum_time += elapsed
-        return {"text": "".join(chunks).strip() or "No response", "elapsed": elapsed, "cumulative": self._cum_time}
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                chunks: List[str] = []
+                async for chunk in self.client.send_message_streaming(req):
+                    if not isinstance(chunk.root, SendStreamingMessageSuccessResponse):
+                        continue
+                    event = chunk.root.result
+                    if isinstance(event, TaskArtifactUpdateEvent):
+                        for p in event.artifact.parts:
+                            if isinstance(p.root, TextPart):
+                                chunks.append(p.root.text)
+                    elif isinstance(event, TaskStatusUpdateEvent):
+                        msg = event.status.message
+                        if msg:
+                            for p in msg.parts:
+                                if isinstance(p.root, TextPart):
+                                    chunks.append(p.root.text)
+                
+                elapsed = time.perf_counter() - t0
+                self._cum_time += elapsed
+                response_text = "".join(chunks).strip() or "No response"
+                return {"text": response_text, "elapsed": elapsed, "cumulative": self._cum_time}
+                
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Error communicating with opponent (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error(f"All retries failed, returning fallback response")
+                    elapsed = time.perf_counter() - t0
+                    self._cum_time += elapsed
+                    return {"text": "look", "elapsed": elapsed, "cumulative": self._cum_time, "error": str(last_error)}
     
     def reset_timer(self) -> None:
         self._cum_time = 0.0
@@ -763,7 +783,7 @@ async def run_episode(
     opponent_agent_url: str,
     task_json_path: str,
     battle_id: str,
-    step_limit: int = 80,
+    step_limit: int = 30,
     api_url: str | None = None,
 ) -> dict[str, Any]:
     """Run one ALFWorld episode against the opponent agent via REST API.
@@ -771,14 +791,14 @@ async def run_episode(
     Parameters
     ----------
     opponent_agent_url : str
-        URL to the opponent agent's agent card (e.g., "http://localhost:8061/")
+        URL to the opponent agent's agent card (e.g., "http://127.0.0.1:8061/")
     task_json_path : str
         Path to the task JSON file (note: current API implementation may not support
         specific task selection; this parameter is preserved for future API updates)
     battle_id : str
         Battle identifier (used as session_id for API)
     step_limit : int
-        Maximum number of steps to run (default: 80)
+        Maximum number of steps to run (default: 30, reduced for simpler/shorter tasks)
     api_url : str | None
         Base URL of the ALFWorld API server. If None, looks up from _battle_containers
         using battle_id. Must have called setup_docker_env() first if None.
@@ -821,7 +841,7 @@ async def _run_episode_impl(
     opponent_agent_url: str,
     task_json_path: str,
     battle_id: str,
-    step_limit: int = 80,
+    step_limit: int = 30,
     api_url: str | None = None,
 ) -> dict[str, Any]:
     """Internal implementation of run_episode."""
@@ -872,14 +892,77 @@ async def _run_episode_impl(
         # Ask opponent for next action
         prompt = observation
         if admissible_commands:
-            prompt += f"\n\nAdmissible commands: {', '.join(admissible_commands[:5])}"  # Show first 5
+            # Format admissible commands like the working code does
+            cmd_list = admissible_commands[0] if isinstance(admissible_commands[0], list) else admissible_commands
+            formatted_cmds = "\n".join([f"  {i+1}. {cmd}" for i, cmd in enumerate(cmd_list[:10])])
+            prompt += f"\n\nAvailable actions (choose one):\n{formatted_cmds}"
+            if len(cmd_list) > 10:
+                prompt += f"\n  ... and {len(cmd_list) - 10} more actions"
         
-        reply = await messenger.ask(prompt)
-        action = reply["text"].strip()
+        action = None
+        action_clean = None
+        reply = {"elapsed": 0.0}
+        
+        try:
+            reply = await messenger.ask(prompt)
+            action = reply["text"].strip()
+            
+            # Clean up action text (like working code)
+            action_clean = action.replace('"', '').replace("'", "").strip()
+            if action_clean.lower().startswith("action:"):
+                action_clean = action_clean[7:].strip()
+            
+            # Validate action against admissible commands (like working code)
+            cmd_list = admissible_commands[0] if isinstance(admissible_commands, list) and len(admissible_commands) > 0 else []
+            if isinstance(cmd_list, list) and len(cmd_list) > 0:
+                admissible_lower = [cmd.lower() for cmd in cmd_list]
+                action_lower = action_clean.lower()
+                
+                # Try to find matching action
+                if action_lower not in admissible_lower:
+                    # Try partial matching
+                    best_match = None
+                    for cmd in cmd_list:
+                        if action_lower in cmd.lower() or cmd.lower() in action_lower:
+                            best_match = cmd
+                            break
+                    
+                    if best_match:
+                        action_clean = best_match
+                        logger.info(f"Matched action '{action}' to '{best_match}'")
+                    elif cmd_list:
+                        logger.warning(f"Action '{action_clean}' not in admissible commands, using first available")
+                        action_clean = cmd_list[0]
+                else:
+                    # Find exact match
+                    for cmd in cmd_list:
+                        if cmd.lower() == action_lower:
+                            action_clean = cmd
+                            break
+        except Exception as e:
+            logger.error(f"Error getting action from opponent: {e}")
+            # Fallback to first admissible command
+            cmd_list = admissible_commands[0] if isinstance(admissible_commands, list) and len(admissible_commands) > 0 else []
+            if isinstance(cmd_list, list) and len(cmd_list) > 0:
+                action_clean = cmd_list[0]
+                logger.info(f"Using fallback action: {action_clean}")
+                reply = {"elapsed": 0.0, "error": str(e)}
+            else:
+                action_clean = "look"
+                reply = {"elapsed": 0.0, "error": str(e)}
+        
+        if action_clean is None:
+            logger.error("Could not determine action to execute, breaking")
+            break
         
         # Step environment via API
-        logger.debug(f"Step {step}: executing action '{action[:50]}...'")
-        step_response = await _step_episode_via_api(api_url, battle_id, action)
+        logger.info(f"Step {step + 1}: executing action '{action_clean[:50]}...'")
+        try:
+            step_response = await _step_episode_via_api(api_url, battle_id, action_clean)
+        except Exception as e:
+            logger.error(f"Error executing action: {e}")
+            # If step fails, break the loop
+            break
         
         # Extract response data
         next_observation = step_response.get("observation", "")
@@ -894,11 +977,12 @@ async def _run_episode_impl(
         
         action_log.append(
             {
-                "step": step,
-                "action": action,
+                "step": step + 1,
+                "action": action_clean,  # Use cleaned/validated action
+                "action_raw": action if action is not None else action_clean,  # Keep original for debugging
                 "obs": observation,
                 "reward": reward,
-                "elapsed": reply["elapsed"],
+                "elapsed": reply.get("elapsed", 0.0),
             }
         )
         cumulative_reward += reward
@@ -917,6 +1001,9 @@ async def _run_episode_impl(
     if not done:
         success = bool(raw_info.get("won", False) or raw_info.get("success", False))
     
+    # Compute cleanup metrics from action log
+    metrics = compute_cleanup_metrics(action_log)
+    
     result = {
         "task_json": str(task_json),
         "action_log": action_log,
@@ -924,11 +1011,12 @@ async def _run_episode_impl(
         "success": success,
         "reward": cumulative_reward,
         "task_meta": task_meta,
+        "metrics": metrics,  # Add metrics to result
     }
     
     logger.info(
         f"Episode completed: {len(action_log)} steps, success={success}, "
-        f"cumulative_reward={cumulative_reward}"
+        f"cumulative_reward={cumulative_reward}, cleanup_score={metrics.get('cleanup_score', 0):.2f}"
     )
     
     return result

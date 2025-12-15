@@ -19,7 +19,7 @@ from fastmcp import FastMCP
 
 
 # CONFIG
-BACKEND_URL = "http://localhost:9000"     # AgentBeats backend
+BACKEND_URL = "http://127.0.0.1:9000"     # AgentBeats backend
 DEFAULT_PORT = 9002                            # SSE endpoint for MCP
 DOCKER_PREFIX = "alfworld_"                    # container name = f"{DOCKER_PREFIX}{battle_id}"
 
